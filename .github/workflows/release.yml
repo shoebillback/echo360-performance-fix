@@ -1,0 +1,52 @@
+name: Test and release userscript
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'echo360-static-global-style-fix.user.js'
+      - 'tests/**'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: userscript-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$GH_REPO/tarball/$GITHUB_SHA" > source.tar.gz
+          mkdir source
+          tar -xzf source.tar.gz -C source --strip-components=1
+      - name: Validate script and run regression tests
+        working-directory: source
+        run: |
+          node --check echo360-static-global-style-fix.user.js
+          node --test tests/global-style.test.cjs
+      - name: Publish versioned release
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version=$(sed -nE 's|^// @version[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$|\1|p' echo360-static-global-style-fix.user.js)
+          test -n "$version"
+          tag="v$version"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; leaving it unchanged."
+          else
+            gh release create "$tag" echo360-static-global-style-fix.user.js \
+              --target "$GITHUB_SHA" \
+              --title "Echo360 Static Global Style Fix $tag" \
+              --notes-file RELEASE_NOTES.md
+          fi
